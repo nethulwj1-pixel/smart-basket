@@ -1,3 +1,5 @@
+import from re { search as re_search }
+
 node UserProfileNode {
     has display_name: str = "";
     has weekly_habits: list[str] = ["Rice (5kg)", "Eggs (Pack of 10)", "Milk (1L)"];
@@ -40,9 +42,24 @@ def:protect getUserProfile() -> UserProfileView {
 def:protect getMissingHabitSuggestions(grocery_text: str) -> list[str] {
     profiles = [root -->][?:UserProfileNode];
     if len(profiles) == 0 { return []; }
-    submitted = grocery_text.lower();
+    entry_bases: list[str] = [];
+    for entry in grocery_text.split(",") {
+        raw_entry = entry.strip().lower();
+        if len(raw_entry) == 0 { continue; }
+        match_result = re_search(r"^(\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gram|grams|l|liter|litre|packs?|pcs|pieces?)?\b[\s,:;-]*", raw_entry);
+        needle = raw_entry;
+        if match_result is not None and len(raw_entry[match_result.end():].strip()) > 0 { needle = raw_entry[match_result.end():].strip(); }
+        entry_bases = entry_bases + [needle.split(" (")[0]];
+    }
     missing: list[str] = [];
-    for habit in profiles[0].weekly_habits { if not (habit.lower() in submitted) { missing = missing + [habit]; } }
+    for habit in profiles[0].weekly_habits {
+        habit_base = habit.lower().split(" (")[0];
+        covered = False;
+        for base in entry_bases {
+            if base == habit_base or habit_base.startswith(base) or base.startswith(habit_base) { covered = True; }
+        }
+        if not covered { missing = missing + [habit]; }
+    }
     return missing;
 }
 

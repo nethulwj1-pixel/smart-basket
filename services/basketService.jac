@@ -1,4 +1,5 @@
 import from datetime { datetime, timedelta }
+import from re { search as re_search }
 import from services.userProfile { UserProfileView, getUserProfile, getMissingHabitSuggestions, recordShopping }
 import from services.paymentCards { SavedPaymentCard }
 
@@ -285,17 +286,38 @@ async def:pub optimizeBasket(grocery_text: str, selected_cards: list[str], prefe
     products: list[BasketItem] = [];
     unavailable: list[str] = [];
     for entry in grocery_text.split(",") {
-        needle = entry.lower().strip();
+        raw_entry = entry.strip().lower();
+        if len(raw_entry) == 0 { continue; }
         quantity: float = 1.0;
         requested_unit = "pack";
-        for prefix in ["1kg ", "2kg ", "3kg ", "4kg ", "1l ", "2l "] {
-            if needle.startswith(prefix) {
-                quantity = float(prefix[:len(prefix) - 3].strip());
-                requested_unit = "kg" if "kg" in prefix else "L";
-                needle = needle[len(prefix):];
+        requested_amount: float = 1.0;
+        needle: str = raw_entry;
+        match_result = re_search(r"^(\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gram|grams|l|liter|litre|packs?|pcs|pieces?)?\b[\s,:;-]*", raw_entry);
+        if match_result is not None and len(raw_entry[match_result.end():].strip()) > 0 {
+            amount_text = match_result.group(1);
+            unit_text = match_result.group(2);
+            requested_amount = float(amount_text);
+            needle = raw_entry[match_result.end():].strip();
+            if unit_text is None { requested_unit = "pack"; }
+            elif unit_text in ["kg", "kgs"] { requested_unit = "kg"; }
+            elif unit_text in ["g", "gm", "gram", "grams"] { requested_unit = "g"; }
+            elif unit_text in ["l", "liter", "litre"] { requested_unit = "L"; }
+            else { requested_unit = "pack"; }
+            quantity = requested_amount;
+        } else {
+            trailing = re_search(r"\s+(\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gram|grams|l|liter|litre|packs?|pcs|pieces?)?\s*$", raw_entry);
+            if trailing is not None and len(raw_entry[:trailing.start()].strip()) > 0 and not raw_entry[:trailing.start()].strip().endswith("(") {
+                unit_text = trailing.group(2);
+                requested_amount = float(trailing.group(1));
+                needle = raw_entry[:trailing.start()].strip();
+                if unit_text is None { requested_unit = "pack"; }
+                elif unit_text in ["kg", "kgs"] { requested_unit = "kg"; }
+                elif unit_text in ["g", "gm", "gram", "grams"] { requested_unit = "g"; }
+                elif unit_text in ["l", "liter", "litre"] { requested_unit = "L"; }
+                else { requested_unit = "pack"; }
+                quantity = requested_amount;
             }
         }
-        needle = needle.strip();
         matched: Grocery | None = None;
         nearest: Grocery | None = None;
         nearest_distance: int = 999;
@@ -307,13 +329,21 @@ async def:pub optimizeBasket(grocery_text: str, selected_cards: list[str], prefe
             distance = editDistance(requested_base, short_name);
             if distance < nearest_distance { nearest_distance = distance; nearest = item; }
         }
-        if matched is None and nearest is not None and nearest_distance <= 2 { matched = nearest as Grocery; }
+        if matched is None and nearest is not None and nearest_distance <= 2 and len(requested_base) >= 3 { matched = nearest as Grocery; }
         if matched is not None {
             product = matched as Grocery;
-            requested_amount = quantity;
-            if requested_unit == "kg" and product.pack_unit == "kg" { quantity = requested_amount / product.pack_size; }
-            elif requested_unit == "L" and product.pack_unit == "L" { quantity = requested_amount / product.pack_size; }
-            else { quantity = requested_amount; }
+            if requested_unit == "kg" {
+                if product.pack_unit == "kg" { quantity = requested_amount / product.pack_size; }
+                elif product.pack_unit == "g" { quantity = requested_amount * 1000.0 / product.pack_size; }
+                else { quantity = requested_amount; }
+            } elif requested_unit == "g" {
+                if product.pack_unit == "g" { quantity = requested_amount / product.pack_size; }
+                elif product.pack_unit == "kg" { quantity = requested_amount / (product.pack_size * 1000.0); }
+                else { quantity = requested_amount; }
+            } elif requested_unit == "L" {
+                if product.pack_unit == "L" { quantity = requested_amount / product.pack_size; }
+                else { quantity = requested_amount; }
+            } else { quantity = requested_amount; }
             products = products + [BasketItem(name=product.name, quantity=quantity, unit=product.pack_unit, requested_quantity=requested_amount, requested_unit=requested_unit, category=product.category)];
         } else { unavailable = unavailable + [entry.strip()]; }
     }
