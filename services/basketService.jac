@@ -303,7 +303,7 @@ async def:pub optimizeBasket(grocery_text: str, selected_cards: list[str], prefe
         for item in [root -->][?:Grocery] {
             normalized_name = item.name.lower();
             short_name = normalized_name.split(" (")[0];
-            if normalized_name.startswith(needle + " (") or normalized_name == needle or short_name == needle or requested_base in short_name or short_name in requested_base { matched = item; }
+            if normalized_name == needle or short_name == needle or short_name.startswith(requested_base) { matched = item; }
             distance = editDistance(requested_base, short_name);
             if distance < nearest_distance { nearest_distance = distance; nearest = item; }
         }
