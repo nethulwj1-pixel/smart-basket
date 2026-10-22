@@ -1,6 +1,6 @@
 sv import from ..services.paymentCards { SavedPaymentCard, listSavedCards }
 sv import from ..services.userProfile { UserProfileView, getDisplayName, getUserProfile, getMissingHabitSuggestions, recordShopping }
-sv import from ..services.basketService { OptimizationResult, OfferRule, optimizeBasket }
+sv import from ..services.basketService { OptimizationResult, OfferRule, optimizeBasket, readHandwrittenList }
 import from "@jac/runtime" { Link, useNavigate, jacIsLoggedIn }
 import from .ui.button { Button }
 import from .ui.card { Card, CardContent, CardDescription, CardHeader, CardTitle }
@@ -36,6 +36,8 @@ def:pub SmartBasket() -> JsxElement {
     has speed_priority: int = 45;
     has delivery_days: int = 1;
     has delivery_hours: int = 0;
+    has scanning: bool = False;
+    has scan_message: str = "";
     nav = useNavigate();
 
     async can with entry {
@@ -48,6 +50,34 @@ def:pub SmartBasket() -> JsxElement {
         }
     }
     def handle_text(e: ChangeEvent) { grocery_text = e.target.value; }
+    def handle_scan(e: ChangeEvent) {
+        files = e.target.files as any;
+        if len(files) == 0 { return; }
+        file = files[0];
+        if not file { return; }
+        scanning = True;
+        scan_message = "Reading your handwritten list...";
+        reader = new(FileReader) as any;
+        reader.onload = lambda {
+            handle_scan_read(reader.result);
+        };
+        reader.readAsDataURL(file);
+    }
+    async def handle_scan_read(data: any) {
+        try {
+            parsed = await readHandwrittenList(data);
+            if len(parsed.items) > 0 {
+                grocery_text = ", ".join(parsed.items);
+                basket_items = parsed.items;
+                scan_message = parsed.notes if len(parsed.notes) > 0 else ("Found " + str(len(parsed.items)) + " items. Add stores and payment, then find the best basket.");
+            } else {
+                scan_message = parsed.notes if len(parsed.notes) > 0 else "No items could be read from that photo.";
+            }
+        } except Exception as err {
+            scan_message = "Could not read the list right now. Please type the items instead.";
+        }
+        scanning = False;
+    }
     def handle_store(e: ChangeEvent) {
         store = e.target.value;
         if store in selected_stores { selected_stores = [item for item in selected_stores if item != store]; }
@@ -121,7 +151,7 @@ def:pub SmartBasket() -> JsxElement {
             <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-slate-900/70 px-5 py-7 sm:px-8 sm:py-9"><div className="relative flex flex-wrap items-end justify-between gap-6"><div className="flex max-w-3xl flex-col gap-3"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300"><HugeiconsIcon icon={SparklesIcon} strokeWidth={2} className="mr-2 inline size-4" />{"Welcome back, " + display_name if len(display_name) > 0 else "Smarter shopping starts here"}</p><h1 className="text-3xl font-semibold text-white sm:text-5xl">A better basket, <span className="text-emerald-300">by design.</span></h1><p className="text-sm text-slate-400 sm:text-base">Compare the supplied store inventory, qualifying bank offers, and delivery costs.</p></div><div className="rounded-2xl border border-cyan-300/15 bg-slate-950/50 px-4 py-3"><p className="font-semibold text-white">AI basket planner</p><p className="text-xs text-slate-400">Habit-aware suggestions</p></div></div></div>
             <div className="grid gap-5 lg:grid-cols-12 lg:items-start">
                 <section className="grid gap-5 lg:col-span-7">
-                    <Card className="sb-glass border-white/10 bg-slate-900/65"><CardHeader><CardTitle className="text-white">Build your basket</CardTitle><CardDescription className="text-slate-400">Enter items and quantities such as 2 Carrot (1kg), Rice (5kg), Eggs (Pack of 10).</CardDescription></CardHeader><CardContent className="flex flex-col gap-4"><label htmlFor="grocery-list" className="text-sm text-slate-200">Grocery list</label><textarea id="grocery-list" value={grocery_text} onChange={handle_text} rows={4} className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white" /><div className="flex justify-between"><span className="text-xs text-slate-400">{str(len(basket_items))} items</span><Button variant="outline" onClick={handle_add}>Update basket</Button></div><div className="flex flex-wrap gap-2">{for (i, item) in enumerate(basket_items) { <Badge key={str(i)} variant="secondary">{item}</Badge> }}</div>
+                    <Card className="sb-glass border-white/10 bg-slate-900/65"><CardHeader><CardTitle className="text-white">Build your basket</CardTitle><CardDescription className="text-slate-400">Enter items and quantities such as 2 Carrot (1kg), Rice (5kg), Eggs (Pack of 10).</CardDescription></CardHeader><CardContent className="flex flex-col gap-4"><label htmlFor="grocery-list" className="text-sm text-slate-200">Grocery list</label><textarea id="grocery-list" value={grocery_text} onChange={handle_text} rows={4} className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white" /><div className="flex justify-between"><span className="text-xs text-slate-400">{str(len(basket_items))} items</span><div className="flex items-center gap-2"><label className={"cursor-pointer rounded-xl border border-cyan-300/30 px-4 py-2 text-sm font-semibold text-cyan-200 transition-colors hover:bg-cyan-300/10" + (" opacity-60" if scanning else "")}><input type="file" accept="image/*" capture="environment" className="hidden" onChange={handle_scan} />{"Reading..." if scanning else "Upload handwritten list"}</label><Button variant="outline" onClick={handle_add}>Update basket</Button></div></div>{if scan_message != "" { <p className="text-xs text-cyan-200">{scan_message}</p> }}<div className="flex flex-wrap gap-2">{for (i, item) in enumerate(basket_items) { <Badge key={str(i)} variant="secondary">{item}</Badge> }}</div>
                     {if len(suggestions) > 0 { <div className="rounded-2xl border border-cyan-300/30 bg-cyan-300/[0.07] p-4 shadow-[0_0_28px_rgba(34,211,238,.10)]"><p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">Agent Alert</p>{for (i, suggestion) in enumerate(suggestions) { <div key={str(i)} className="mt-2 flex flex-wrap items-center justify-between gap-2"><p className="flex-1 text-sm text-slate-200">I noticed you usually buy <strong>{suggestion}</strong> every week, but it is not on your list. Should I include it in the price check?</p><Button size="sm" onClick={lambda (e: MouseEvent) { add_habit(suggestion); }}>Add {suggestion}</Button></div> }}</div> }}
                     </CardContent></Card>
                     {if len(suggestions) > 0 { <Card className="sb-glass border-cyan-300/30 bg-cyan-300/[0.07] shadow-[0_0_28px_rgba(34,211,238,.12)]"><CardHeader><CardTitle className="text-cyan-100">Agent Alert</CardTitle><CardDescription className="text-slate-300">Based on your prior confirmed mock baskets</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">{for (i, suggestion) in enumerate(suggestions) { <div key={str(i)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/40 p-3"><p className="flex-1 text-sm text-slate-200">I noticed you usually buy <strong>{suggestion}</strong> every week, but it is not on your list. Should I include it in the price check?</p><Button size="sm" onClick={lambda (e: MouseEvent) { add_habit(suggestion); }}>Add to list</Button></div> }}</CardContent></Card> }}

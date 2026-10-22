@@ -2,6 +2,8 @@ import from datetime { datetime, timedelta }
 import from re { search as re_search }
 import from services.userProfile { UserProfileView, getUserProfile, getMissingHabitSuggestions, recordShopping }
 import from services.paymentCards { SavedPaymentCard }
+import from jaclang.byllm.lib { Image }
+import from base64 { b64decode }
 
 node Grocery {
     has name: str = "";
@@ -110,6 +112,32 @@ obj OptimizationResult {
     has delivery_date: str = "";
     has promo_note: str = "";
     has error: str = "";
+}
+
+obj ParsedList {
+    has items: list[str] = [];
+    has notes: str = "";
+}
+sem ParsedList.items = "Every grocery item legible in the photo, one entry per written line, preserving quantities like '2kg rice' exactly as written.";
+sem ParsedList.notes = "Short note about lines that were unclear or unreadable; empty string if the whole list was legible.";
+
+def _parse_handwritten(img: Image) -> ParsedList by llm(temperature=0.1, max_tokens=800);
+sem _parse_handwritten = "Read a photographed handwritten grocery list and transcribe it exactly.";
+sem _parse_handwritten.img = "The photo of a handwritten grocery list.";
+
+async def:pub readHandwrittenList(image_data: str) -> ParsedList {
+    if len(image_data.strip()) == 0 { return ParsedList(notes="No image was provided."); }
+    payload = image_data.split(",", 1)[1] if "," in image_data else image_data;
+    try {
+        img = Image(b64decode(payload) as any);
+    } except Exception as err {
+        return ParsedList(notes="That file could not be read as an image.");
+    }
+    try {
+        return _parse_handwritten(img);
+    } except Exception as err {
+        return ParsedList(notes="The handwriting could not be read right now. Please type the items instead.");
+    }
 }
 obj ItemClassification { has name: str; has category: str; }
 obj ClassificationResult { has items: list[ItemClassification] = []; }
